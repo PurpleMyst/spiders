@@ -1,87 +1,69 @@
-use futures::{Future, Stream};
-use hyper::{client::HttpConnector, Client, Error as HyperError, Uri};
-use hyper_tls::HttpsConnector;
-use select::{document::Document, node::Node};
+use super::visitor::Visitor;
+
+use futures::{Async, Future, Stream};
+use hyper::{Error as HyperError, Uri};
+use hyper_tls::Error as HyperTlsError;
+use select::document::Document;
 use tokio_core::reactor::Handle;
 
-use std::collections::HashSet;
-
-const VISIT_LIMIT: usize = 10;
-
-#[derive(Debug)]
 pub struct Crawler {
-    handle: Handle,
-    visited: HashSet<Uri>,
-    http_client: Client<HttpsConnector<HttpConnector>>,
+    visitor: Visitor,
+    to_visit: Vec<Uri>,
+
+    maybe_future: Option<Box<Future<Item = (Document, Vec<Uri>), Error = HyperError>>>,
+    maybe_visiting: Option<Uri>,
 }
 
 impl Crawler {
-    pub fn new(handle: &Handle) -> Self {
-        Self {
-            handle: handle.clone(),
-            visited: HashSet::new(),
-            http_client: Client::configure()
-                // TODO Not use unwrap + not hardcode 4
-                .connector(HttpsConnector::new(4, handle).unwrap())
-                .build(handle),
-        }
+    pub fn new(handle: &Handle, start_uri: Uri) -> Result<Self, HyperTlsError> {
+        Ok(Self {
+            visitor: Visitor::new(handle)?,
+            to_visit: vec![start_uri],
+
+            maybe_future: None,
+            maybe_visiting: None,
+        })
     }
+}
 
-    pub fn visit(
-        &mut self,
-        base_uri: Uri,
-    ) -> Option<impl Future<Item = Vec<Uri>, Error = HyperError>> {
-        if self.visited.len() >= VISIT_LIMIT || self.visited.contains(&base_uri) {
-            return None;
-        } else {
-            self.visited.insert(base_uri.clone());
+impl Stream for Crawler {
+    // TODO: Use `failure` to avoid `unwrap` and `expect`.
+
+    type Item = (Uri, Document);
+    type Error = HyperError;
+
+    fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
+        if self.maybe_future.is_none() {
+            loop {
+                let uri = match self.to_visit.pop() {
+                    Some(uri) => uri,
+                    None => return Ok(Async::Ready(None)),
+                };
+
+                self.maybe_visiting = Some(uri.clone());
+                self.maybe_future = if let Some(future) = self.visitor.visit(uri) {
+                    Some(Box::new(future))
+                } else {
+                    continue;
+                };
+
+                break;
+            }
         }
 
-        Some(
-            self.http_client
-                // XXX: Can we remove this clone?
-                .get(base_uri.clone())
-                .and_then(|response| response.body().collect())
-                .map(move |chunks| {
-                    // TODO: Use something smarter than reading the whole body into memory.
-                    let body = chunks
-                        .into_iter()
-                        .map(|chunk| String::from_utf8_lossy(&chunk).into_owned())
-                        .collect::<String>();
+        // We're sure `self.maybe_future` is Some, so we can unwrap it.
+        let (document, new_urls) = {
+            let future = self.maybe_future.as_mut().unwrap();
+            try_ready!(future.poll())
+        };
 
-                    let document = Document::from(body.as_str());
+        self.maybe_future = None;
+        self.to_visit.extend(new_urls);
 
-                    let links = document
-                        .find(|node: &Node| node.html().starts_with("<a"))
-                        .filter_map(|node| node.attr("href"));
-
-                    links
-                        .filter_map(|link| link.parse::<Uri>().ok())
-                        .filter_map(|uri| {
-                            if uri.is_absolute() {
-                                Some(uri)
-                            } else {
-                                let new_url = 
-                                    if uri.path().starts_with("//") {
-                                        format!("{}:{}", base_uri.scheme()?, uri)
-                                    } else if uri.to_string() == "#" {
-                                        // TODO: implement a better check for this.
-                                        // We could just return `base_uri.to_string()`, but we've obviously already visited that so we don't care.
-                                        return None;
-                                    } else {
-                                        format!(
-                                            "{}://{}{}",
-                                            uri.scheme().or(base_uri.scheme())?,
-                                            uri.authority().or(base_uri.host())?,
-                                            uri.path(),
-                                        )
-                                    };
-
-                                new_url.parse::<Uri>().ok()
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                }),
-        )
+        // We're also sure `self.maybe_visiting` is Some.
+        Ok(Async::Ready(Some((
+            self.maybe_visiting.take().unwrap(),
+            document,
+        ))))
     }
 }
