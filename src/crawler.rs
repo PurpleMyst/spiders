@@ -6,6 +6,11 @@ use hyper_tls::Error as HyperTlsError;
 use select::document::Document;
 use tokio_core::reactor::Handle;
 
+/// The main crawler struct.
+///
+/// Usage of this must be done as a [`::futures::Stream`], and this will not stop on its own unless
+/// it exhausts its list of URLs to visit (which is unlikely). It is reccommended then that you use
+/// [`::futures::Stream::take`] to not overload the server you're crawling.
 pub struct Crawler {
     visitor: Visitor,
     to_visit: Vec<Uri>,
@@ -17,6 +22,7 @@ pub struct Crawler {
 }
 
 impl Crawler {
+    /// Creates a new `Crawler` instance.
     pub fn new(handle: &Handle, start_uri: Uri) -> Result<Self, HyperTlsError> {
         Ok(Self {
             visitor: Visitor::new(handle)?,
@@ -29,6 +35,8 @@ impl Crawler {
         })
     }
 
+    /// Limit the URLs this crawler crawls to the one which match the host given. This returns the
+    /// previous host value, if there was one.
     pub fn limit_host(&mut self, host: String) -> Option<String> {
         let old_host = self.host.take();
         self.host = Some(host);
@@ -37,8 +45,6 @@ impl Crawler {
 }
 
 impl Stream for Crawler {
-    // TODO: Use `failure` to avoid `unwrap` and `expect`.
-
     type Item = (Uri, Document);
     type Error = HyperError;
 

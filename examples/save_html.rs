@@ -1,16 +1,12 @@
-#[macro_use]
 extern crate futures;
 extern crate hyper;
-extern crate hyper_tls;
-extern crate num_cpus;
 extern crate select;
+extern crate spiders;
 extern crate tokio_core;
-
-mod crawler;
-mod visitor;
 
 use futures::{future, Stream};
 use hyper::Uri;
+use select::predicate::Name;
 
 fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
@@ -18,13 +14,14 @@ fn main() {
     let start_uri = "https://xkcd.com".parse::<Uri>().unwrap();
     let host = start_uri.host().unwrap().to_owned();
 
-    let mut crawler = crawler::Crawler::new(&core.handle(), start_uri).unwrap();
+    let mut crawler = spiders::Crawler::new(&core.handle(), start_uri).unwrap();
 
     crawler.limit_host(host);
 
-    core.run(
-        crawler
-            .take(32)
-            .for_each(|(uri, _document)| future::ok(println!("we visited {}", uri))),
-    ).unwrap();
+    core.run(crawler.take(1).for_each(|(_uri, document)| {
+        future::ok(println!(
+            "{}",
+            document.find(Name("html")).next().unwrap().html()
+        ))
+    })).unwrap();
 }
