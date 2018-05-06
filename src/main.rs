@@ -10,12 +10,21 @@ mod crawler;
 mod visitor;
 
 use futures::{future, Stream};
+use hyper::Uri;
 
 fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
-    let crawler =
-        crawler::Crawler::new(&core.handle(), "https://xkcd.com".parse().unwrap()).unwrap();
 
-    core.run(crawler.for_each(|(uri, _document)| future::ok(println!("we visited {}", uri))))
-        .unwrap();
+    let start_uri = "https://xkcd.com".parse::<Uri>().unwrap();
+    let host = start_uri.host().unwrap().to_owned();
+
+    let mut crawler = crawler::Crawler::new(&core.handle(), start_uri).unwrap();
+
+    crawler.limit_host(host);
+
+    core.run(
+        crawler
+            .take(32)
+            .for_each(|(uri, _document)| future::ok(println!("we visited {}", uri))),
+    ).unwrap();
 }

@@ -7,8 +7,6 @@ use tokio_core::reactor::Handle;
 
 use std::collections::HashSet;
 
-const VISIT_LIMIT: usize = 10;
-
 fn relative_uri_to_absolute(base_uri: &Uri, uri: Uri) -> Option<Uri> {
     if uri.is_absolute() {
         Some(uri)
@@ -56,7 +54,7 @@ impl Visitor {
         &mut self,
         base_uri: Uri,
     ) -> Option<impl Future<Item = (Document, Vec<Uri>), Error = HyperError>> {
-        if self.visited.len() >= VISIT_LIMIT || self.visited.contains(&base_uri) {
+        if self.visited.contains(&base_uri) {
             return None;
         } else {
             self.visited.insert(base_uri.clone());

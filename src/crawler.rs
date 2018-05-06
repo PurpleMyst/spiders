@@ -10,6 +10,8 @@ pub struct Crawler {
     visitor: Visitor,
     to_visit: Vec<Uri>,
 
+    host: Option<String>,
+
     maybe_future: Option<Box<Future<Item = (Document, Vec<Uri>), Error = HyperError>>>,
     maybe_visiting: Option<Uri>,
 }
@@ -20,9 +22,17 @@ impl Crawler {
             visitor: Visitor::new(handle)?,
             to_visit: vec![start_uri],
 
+            host: None,
+
             maybe_future: None,
             maybe_visiting: None,
         })
+    }
+
+    pub fn limit_host(&mut self, host: String) -> Option<String> {
+        let old_host = self.host.take();
+        self.host = Some(host);
+        old_host
     }
 }
 
@@ -39,6 +49,12 @@ impl Stream for Crawler {
                     Some(uri) => uri,
                     None => return Ok(Async::Ready(None)),
                 };
+
+                if let Some(ref host) = self.host {
+                    if uri.host().map(|h| host != h).unwrap_or(true) {
+                        continue;
+                    }
+                }
 
                 self.maybe_visiting = Some(uri.clone());
                 self.maybe_future = if let Some(future) = self.visitor.visit(uri) {
