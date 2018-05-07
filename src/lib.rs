@@ -6,13 +6,15 @@
 
 #[macro_use]
 extern crate futures;
+extern crate failure;
 extern crate hyper;
 extern crate hyper_tls;
 extern crate num_cpus;
+#[macro_use]
+extern crate redis_async;
 extern crate select;
 extern crate tokio_core;
 
 mod crawler;
-mod visitor;
 
 pub use crawler::Crawler;
